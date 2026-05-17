@@ -1,0 +1,4 @@
+comment = 'Extension to send EXPLAIN outputs over a TCP socket to Treepaint client'
+default_version = '1.0'
+module_pathname = '$libdir/pg_treepaint'
+relocatable = true
