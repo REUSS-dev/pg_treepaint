@@ -4,6 +4,7 @@
 #include "commands/explain.h"
 #include "commands/explain_format.h"
 #include "commands/explain_state.h"
+#include "utils/guc.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -30,6 +31,9 @@ typedef struct
 static int es_extension_id;
 static explain_per_plan_hook_type prev_explain_per_plan_hook = NULL;
 
+static char* guc_ip = NULL;
+static int guc_port = 0;
+
 void _PG_init(void);
 static void tp_plan_handler(ExplainState* es, DefElem* opt, ParseState* pstate);
 static void tp_ip_handler(ExplainState* es, DefElem* opt, ParseState* pstate);
@@ -44,6 +48,25 @@ void
 _PG_init(void)
 {
 	es_extension_id = GetExplainExtensionId("pg_treepaint");
+
+	DefineCustomStringVariable("pg_treepaint.ip",
+		"TreePaint target IP address.",
+		NULL,
+		&guc_ip,
+		DEFAULT_IP,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable("pg_treepaint.port",
+		"TreePaint target port number.",
+		NULL,
+		&guc_port,
+		DEFAULT_PORT,
+		0, 65535,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
 
 	RegisterExtensionExplainOption("tp_plan",
 		tp_plan_handler,
@@ -117,8 +140,22 @@ tp_per_plan_hook(PlannedStmt* plannedstmt, IntoClause* into,
 	{
 		if (es->str != NULL && es->str->len > 0)
 		{
-			const char* target_ip = (options->tp_ip != NULL) ? options->tp_ip : DEFAULT_IP;
-			int target_port = (options->tp_port > 0) ? options->tp_port : DEFAULT_PORT;
+			const char* target_ip;
+			int target_port;
+
+			if (options->tp_ip != NULL)
+				target_ip = options->tp_ip;
+			else if (guc_ip != NULL && guc_ip[0] != '\0')
+				target_ip = guc_ip;
+			else
+				target_ip = DEFAULT_IP;
+
+			if (options->tp_port > 0)
+				target_port = options->tp_port;
+			else if (guc_port > 0)
+				target_port = guc_port;
+			else
+				target_port = DEFAULT_PORT;
 
 			send_to_socket(es->str->data, target_ip, target_port);
 		}
