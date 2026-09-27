@@ -26,9 +26,13 @@ typedef struct
 	bool tp_plan;
 	char* tp_ip;
 	int tp_port;
+
+	char* query_tree_rewritten;
 } tp_options;
 
 static int es_extension_id;
+
+static ExplainOneQuery_hook_type prev_ExplainOneQuery_hook = NULL;
 static explain_per_plan_hook_type prev_explain_per_plan_hook = NULL;
 
 static char* guc_ip = NULL;
@@ -38,6 +42,8 @@ void _PG_init(void);
 static void tp_plan_handler(ExplainState* es, DefElem* opt, ParseState* pstate);
 static void tp_ip_handler(ExplainState* es, DefElem* opt, ParseState* pstate);
 static void tp_port_handler(ExplainState* es, DefElem* opt, ParseState* pstate);
+static void tp_ExplainOneQuery(Query* query, int cursorOptions, IntoClause* into,
+	ExplainState* es, const char* queryString, ParamListInfo params, QueryEnvironment* queryEnv);
 static void tp_per_plan_hook(PlannedStmt* plannedstmt, IntoClause* into,
 	ExplainState* es, const char* queryString,
 	ParamListInfo params, QueryEnvironment* queryEnv);
@@ -80,6 +86,9 @@ _PG_init(void)
 		tp_port_handler,
 		NULL);
 
+	prev_ExplainOneQuery_hook = ExplainOneQuery_hook;
+	ExplainOneQuery_hook = tp_ExplainOneQuery;
+
 	prev_explain_per_plan_hook = explain_per_plan_hook;
 	explain_per_plan_hook = tp_per_plan_hook;
 }
@@ -93,6 +102,8 @@ ensure_tp_options(ExplainState* es)
 		options = palloc0_object(tp_options);
 		options->tp_ip = NULL;
 		options->tp_port = 0;
+
+		options->query_tree_rewritten = NULL;
 
 		SetExplainExtensionState(es, es_extension_id, options);
 	}
@@ -126,6 +137,24 @@ tp_port_handler(ExplainState* es, DefElem* opt, ParseState* pstate)
 }
 
 static void
+tp_ExplainOneQuery(Query* query, int cursorOptions, IntoClause* into,
+	ExplainState* es, const char* queryString,
+	ParamListInfo params, QueryEnvironment* queryEnv)
+{
+	tp_options* options = GetExplainExtensionState(es, es_extension_id);
+
+	if (options != NULL && options->tp_plan && query != NULL)
+	{
+		options->query_tree_rewritten = nodeToString(query);
+	}
+
+	if (prev_ExplainOneQuery_hook)
+		(*prev_ExplainOneQuery_hook)(query, cursorOptions, into, es, queryString, params, queryEnv);
+	else
+		standard_ExplainOneQuery(query, cursorOptions, into, es, queryString, params, queryEnv);
+}
+
+static void
 tp_per_plan_hook(PlannedStmt* plannedstmt, IntoClause* into,
 	ExplainState* es, const char* queryString,
 	ParamListInfo params, QueryEnvironment* queryEnv)
@@ -138,6 +167,13 @@ tp_per_plan_hook(PlannedStmt* plannedstmt, IntoClause* into,
 	options = GetExplainExtensionState(es, es_extension_id);
 	if (options != NULL && options->tp_plan)
 	{
+		if (options->query_tree_rewritten != NULL)
+		{
+			ExplainPropertyText("Rewritten Query Tree", options->query_tree_rewritten, es);
+			pfree(options->query_tree_rewritten);
+			options->query_tree_rewritten = NULL;
+		}
+
 		if (es->str != NULL && es->str->len > 0)
 		{
 			const char* target_ip;
